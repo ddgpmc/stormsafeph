@@ -1,0 +1,252 @@
+/* --- Global Reset & Foundation --- */
+:root {
+    --primary-color: #EC1B34; /* Emergency Red */
+    --secondary-color: #007bff; /* Accent Blue for links/nav */
+    --background-light: #f4f4f4;
+    --text-dark: #333;
+    --box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+    --border-radius-base: 10px;
+}
+
+html, body, #root { 
+    margin: 0; 
+    padding: 0; 
+    height: 100%; 
+    font-family: 'Roboto', sans-serif; /* Use a modern, readable font */
+    color: var(--text-dark);
+    overflow: hidden; 
+}
+h1, h2, h3, h4 { margin: 0; padding: 0; }
+
+/* Map takes up the whole screen height */
+#map { 
+    height: 100%; 
+    width: 100%; 
+    z-index: 1; 
+}
+
+/* ---------------------------------- */
+/* --- Control Panel (UI Overlay) --- */
+/* ---------------------------------- */
+
+#controls {
+    position: absolute;
+    top: 15px; /* Consistent spacing */
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 10000;
+    background: rgba(255, 255, 255, 0.95); /* Slightly transparent white background */
+    backdrop-filter: blur(5px); /* Add a subtle blur effect */
+    padding: 12px;
+    border-radius: var(--border-radius-base);
+    box-shadow: var(--box-shadow);
+    display: flex;
+    flex-wrap: wrap; 
+    justify-content: center;
+    gap: 10px; 
+    width: 90%; /* Default width for mobile */
+    max-width: 600px; /* Max width on desktop */
+    box-sizing: border-box;
+}
+
+#controls button {
+    flex: 1 1 100%; /* Force buttons to stack full width on small screens */
+    padding: 14px 15px; /* Slightly larger padding for easy tapping */
+    font-size: 16px;
+    font-weight: 700;
+    border: none;
+    border-radius: 8px;
+    transition: background-color 0.2s, box-shadow 0.2s;
+    text-transform: uppercase;
+}
+
+/* Primary Button: Find Nearest Evacuation Center */
+#findNearestBtn {
+    background-color: var(--primary-color);
+    color: white;
+}
+#findNearestBtn:hover:not(:disabled) { 
+    background-color: #b31427; /* Darker red on hover */
+    box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+}
+
+/* Secondary Button: Emergency Numbers */
+#showEmergencyBtn {
+    background-color: #333; /* Dark background for contrast */
+    color: white;
+}
+#showEmergencyBtn:hover:not(:disabled) {
+    background-color: #555;
+}
+
+#controls button:disabled { 
+    background-color: #ccc; 
+    color: #888;
+    cursor: not-allowed; 
+    box-shadow: none;
+}
+
+
+/* ---------------------------------- */
+/* --- Emergency Modal Styling --- */
+/* ---------------------------------- */
+
+#emergencyModal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.7); /* Darker overlay */
+    z-index: 100000;
+    display: flex; 
+    justify-content: center; 
+    align-items: center; 
+    overflow-y: auto; 
+    padding: 20px 10px;
+}
+
+.modal-content {
+    background: #fff;
+    padding: 25px; 
+    border-radius: 12px;
+    max-width: 800px; /* Constrain width for readability */
+    width: 100%; 
+    box-shadow: var(--box-shadow);
+}
+
+.modal-content h2 { 
+    color: var(--primary-color); 
+    text-align: center; 
+    font-size: 1.8em;
+    margin-bottom: 15px;
+}
+.modal-content a {
+    color: var(--secondary-color); 
+    font-weight: 600;
+}
+.modal-content p:first-of-type {
+    border-bottom: 1px solid #ddd;
+    padding-bottom: 10px;
+    margin-bottom: 15px !important;
+}
+
+/* Emergency Numbers Grid */
+.emergency-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); /* Responsive grid */
+    gap: 15px;
+    margin-top: 15px;
+}
+
+/* Emergency Number Card */
+.emergency-card {
+    background: var(--background-light);
+    padding: 20px;
+    border-radius: 10px;
+    border-left: 5px solid var(--primary-color); /* Highlight card with red bar */
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.emergency-card h3 { 
+    font-size: 1.2em; 
+    color: var(--text-dark);
+    margin-bottom: 8px;
+}
+.emergency-card p {
+    font-size: 14px;
+    margin: 4px 0;
+}
+
+/* Close Button */
+#closeEmergencyModal {
+    padding: 12px 25px; 
+    border: none; 
+    border-radius: 8px; 
+    background: var(--primary-color); 
+    color: #fff; 
+    font-weight: 600;
+    cursor: pointer;
+    margin-top: 25px;
+    transition: background-color 0.2s;
+}
+#closeEmergencyModal:hover {
+    background: #b31427;
+}
+
+/* ---------------------------------- */
+/* --- Leaflet Popup Overrides --- */
+/* ---------------------------------- */
+
+.leaflet-popup-content-wrapper { 
+    border-radius: var(--border-radius-base) !important; 
+    padding: 12px !important; 
+    box-shadow: var(--box-shadow) !important; 
+}
+.leaflet-popup-content h4 { 
+    margin: 0 0 8px 0 !important; 
+    font-size: 18px !important; 
+    font-weight: 700 !important; 
+    color: var(--primary-color) !important; 
+}
+.leaflet-popup-content p { 
+    margin: 4px 0 !important; 
+    font-size: 14px !important; 
+}
+
+/* Navigation Link in Popup */
+.nav-link { 
+    display: inline-block; 
+    margin-top: 10px !important; 
+    padding: 10px 15px !important; 
+    background-color: var(--secondary-color) !important; 
+    color: #fff !important; 
+    font-weight: 700 !important; 
+    text-decoration: none !important; 
+    border-radius: 6px !important; 
+    transition: background-color 0.2s;
+}
+.nav-link:hover { 
+    background-color: #0056b3 !important; 
+}
+
+.leaflet-routing-alt {
+    background-color: white;
+    padding: 20px;
+    border-radius: 15px;
+}
+.leaflet-routing-alternatives-container {
+    border-radius: 15px;
+}
+
+/* --- Cleanup/Non-functional styles removed --- */
+.App, .App-logo, .App-header, .App-link, @keyframes App-logo-spin { display: none; }
+@media (max-width: 1024px) {
+    /* Hides the detailed navigation panel provided by leaflet-routing-machine */
+    .leaflet-routing-alt {
+        display: none !important;
+    }
+}
+#app-footer {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    text-align: center;
+    padding: 8px 0;
+    background-color: rgba(0, 0, 0, 0.7); /* Dark background for visibility */
+    color: #fff;
+    font-size: 13px;
+    z-index: 1000; /* Ensure it stays above the map */
+    letter-spacing: 0.5px;
+}
+
+/* Ensure the clickable part looks like a link on hover */
+#app-footer span[style*="cursor: pointer"] {
+    text-decoration: underline;
+    transition: color 0.2s;
+}
+
+#app-footer span[style*="cursor: pointer"]:hover {
+    color: #81C784 !important; /* Lighter green on hover */
+}
