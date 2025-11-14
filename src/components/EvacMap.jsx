@@ -1,7 +1,9 @@
-import React, { useRef, useEffect } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, useMapEvents, useMap } from 'react-leaflet';
+import React, { useRef, useEffect, useState } from 'react';
+// Removed 'withLeaflet' from the import list
+import { MapContainer, Marker, Popup, useMapEvents, useMap } from 'react-leaflet'; 
 import L from 'leaflet';
 import 'leaflet-routing-machine'; 
+import 'leaflet.offline'; // Correctly installed offline plugin
 import 'leaflet/dist/leaflet.css'; 
 
 // --- Marker Clustering Imports ---
@@ -22,9 +24,89 @@ L.Icon.Default.mergeOptions({
     shadowUrl: markerShadow,
 });
 
+const TILE_URL = "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png";
+
+// ===================================================
+// FIXED: Offline Tile Layer Component (Imperative approach)
+// ===================================================
+const OfflineTileLayer = () => {
+    const map = useMap(); // Get map instance using hook
+    const tileLayerRef = useRef(null);
+
+    useEffect(() => {
+        // 1. Create the offline layer instance
+        const offlineLayer = L.tileLayer.offline(TILE_URL, {
+            maxZoom: 19,
+            attribution: '© <a href="http://osm.org/copyright">OpenStreetMap</a> contributors'
+        });
+
+        // 2. Add it to the map
+        offlineLayer.addTo(map);
+        tileLayerRef.current = offlineLayer;
+
+        // Cleanup function
+        return () => {
+            if (tileLayerRef.current) {
+                map.removeLayer(tileLayerRef.current);
+            }
+        };
+    }, [map]);
+
+    return null;
+};
+// ===================================================
+
 
 // ---------------------------------------------------
-// NEW: Component for Clustered Markers
+// NEW: Component for Offline Tile Cache Control
+// ---------------------------------------------------
+const TileCacheControl = () => {
+    const map = useMap();
+    const [isCaching, setIsCaching] = useState(false);
+    // Use a memoized function for the factory to avoid re-creating the layer on every render
+    const [cacheLayerRef] = useState(() => L.tileLayer.offline(TILE_URL));
+    
+    // Function to start caching
+    const startCaching = () => {
+        const bounds = map.getBounds();
+        const minZoom = 12; // Focus on a reasonable local area
+        const maxZoom = 15; // Max detail level to download
+
+        setIsCaching(true);
+        console.log(`Starting cache from zoom ${minZoom} to ${maxZoom}...`);
+
+        // Start the download process using the offline layer factory
+        cacheLayerRef.download(bounds, minZoom, maxZoom)
+            .on('success', () => {
+                setIsCaching(false);
+                alert(`Map tiles successfully cached for the visible area (Zoom ${minZoom}-${maxZoom})!`);
+            })
+            .on('error', (err) => {
+                setIsCaching(false);
+                console.error("Caching Error:", err);
+                alert("Error caching tiles. Check console.");
+            });
+    };
+
+    return (
+        // Placing the button inside a div here with absolute positioning.
+        <div id="cache-control">
+            <button 
+                onClick={startCaching}
+                disabled={isCaching}
+                // Style for quick visibility and interaction
+                style={{ position: 'absolute', bottom: '10px', left: '10px', zIndex: 1000, padding: '5px 10px', backgroundColor: '#3498db', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}
+            >
+                {isCaching ? "Downloading Tiles..." : "Download Map Tiles for Offline ⬇️"}
+            </button>
+        </div>
+    );
+};
+// ---------------------------------------------------
+
+
+// ---------------------------------------------------
+// Component for Clustered Markers 
 // ---------------------------------------------------
 const ClusteredMarkers = ({ evacCenters }) => {
     const map = useMap();
@@ -33,7 +115,6 @@ const ClusteredMarkers = ({ evacCenters }) => {
     useEffect(() => {
         const clusterGroup = clusterGroupRef.current;
         
-        // 1. Clear previous markers to prevent duplicates
         clusterGroup.clearLayers();
 
         const markers = evacCenters.map(center => {
@@ -43,15 +124,12 @@ const ClusteredMarkers = ({ evacCenters }) => {
             return marker;
         });
 
-        // 2. Add all new markers to the cluster group
         clusterGroup.addLayers(markers);
 
-        // 3. Add the cluster group to the map (if it's not already there)
         if (!map.hasLayer(clusterGroup)) {
             map.addLayer(clusterGroup);
         }
 
-        // Cleanup function: remove the layer when the component unmounts or centers change
         return () => {
             map.removeLayer(clusterGroup);
         };
@@ -62,19 +140,18 @@ const ClusteredMarkers = ({ evacCenters }) => {
 // ---------------------------------------------------
 
 
-// Custom hook/component to manage the routing machine and nearest center logic
+// Custom hook/component to manage the routing machine and nearest center logic 
 const RoutingMachine = ({ userLocation, evacCenters, triggerRoute, setTriggerRoute }) => {
     const map = useMap();
     const routingControlRef = useRef(null);
 
-    // ⚡️ ENSURE ALL DEPENDENCIES ARE PRESENT
     useEffect(() => {
         const currentControl = routingControlRef.current;
         
         const cleanup = () => {
             if (currentControl) {
                 map.removeControl(currentControl);
-                routingControlRef.current = null; // Clear ref on cleanup
+                routingControlRef.current = null;
             }
         };
 
@@ -102,16 +179,13 @@ const RoutingMachine = ({ userLocation, evacCenters, triggerRoute, setTriggerRou
             addWaypoints: false,
             show: false,
             fitSelectedRoutes: true,
-            // Use OSRM for routing, as you don't specify a key/service
             router: L.Routing.osrmv1({
                 serviceUrl: 'https://router.project-osrm.org/route/v1'
             })
         }).addTo(map);
 
-        // Step 4: Update the ref to the new control
         routingControlRef.current = newControl;
 
-        // Corrected Google Maps Directions URL format
         const mapsUrl = `https://www.google.com/maps/dir/?api=1&origin=${userLocation.lat},${userLocation.lng}&destination=${nearest.lat},${nearest.lng}&travelmode=driving`;
         
         const popupHtml = `
@@ -124,45 +198,40 @@ const RoutingMachine = ({ userLocation, evacCenters, triggerRoute, setTriggerRou
             .setContent(popupHtml)
             .openOn(map);
 
-        // Reset the trigger state *after* running the logic
         setTriggerRoute(false); 
 
-        // Step 5: Return the cleanup function.
         return cleanup;
 
     }, [triggerRoute, userLocation, evacCenters, map, setTriggerRoute]);
 
     return null;
 };
-// Custom hook/component to detect user location
+// Custom hook/component to detect user location 
 const LocationMarker = ({ setUserLocation }) => {
     const map = useMapEvents({
         locationfound(e) {
-            // Update state in App.js
             setUserLocation({ lat: e.latlng.lat, lng: e.latlng.lng }); 
-            map.setView(e.latlng, map.getZoom()); // Set map view
+            map.setView(e.latlng, map.getZoom());
         },
         locationerror(e) {
             console.error("Location error:", e.message);
             alert("Location not found. Navigation disabled.");
-            setUserLocation(null); // Explicitly set to null on error
+            setUserLocation(null);
         },
     });
 
-    // Detect location on mount (similar to the original script)
     useEffect(() => {
         map.locate({ setView:true, maxZoom:16, enableHighAccuracy:true });
     }, [map]);
     
-    return null; // This component is just for side effects (locating)
+    return null;
 };
 
 
 const EvacMap = ({ userLocation, setUserLocation, evacCenters,
-    triggerRoute, // New prop
-    setTriggerRoute // New prop
+    triggerRoute, 
+    setTriggerRoute 
 }) => {
-    // Initial view set around Manila
     const initialPosition = [14.6500, 120.9800]; 
 
     return (
@@ -175,32 +244,32 @@ const EvacMap = ({ userLocation, setUserLocation, evacCenters,
                 // Any imperative Leaflet code you need can go here
             }}
         >
-            <TileLayer
-                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                maxZoom={19}
-            />
-
-            {/* Marker for the User Location */}
+            {/* 1. Use the Offline Tile Layer Component */}
+            <OfflineTileLayer />
+            
+            {/* 2. Marker for the User Location */}
             {userLocation && (
                 <Marker position={[userLocation.lat, userLocation.lng]}>
                     <Popup>You are here</Popup>
                 </Marker>
             )}
 
-            {/* 👇 REPLACED: Markers for Evacuation Centers are now clustered */}
+            {/* 3. Clustered Markers */}
             <ClusteredMarkers evacCenters={evacCenters} />
-            {/* 👆 REPLACED: EvacCenters rendering */}
-
-            {/* Component to trigger initial location detection */}
+            
+            {/* 4. Location Detection */}
             <LocationMarker setUserLocation={setUserLocation} />
             
-            {/* Component to handle Routing Logic */}
+            {/* 5. Routing Logic */}
             <RoutingMachine 
                 userLocation={userLocation} 
                 evacCenters={evacCenters}
                 triggerRoute={triggerRoute} 
                 setTriggerRoute={setTriggerRoute} 
             />
+
+            {/* 6. The Cache Control Button */}
+            <TileCacheControl />
 
         </MapContainer>
     );
