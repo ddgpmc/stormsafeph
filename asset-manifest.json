@@ -1,0 +1,16 @@
+{
+  "files": {
+    "main.css": "/stormsafeph/static/css/main.ed997206.css",
+    "main.js": "/stormsafeph/static/js/main.a779557c.js",
+    "static/js/453.efaaff85.chunk.js": "/stormsafeph/static/js/453.efaaff85.chunk.js",
+    "static/media/qrph.jpg": "/stormsafeph/static/media/qrph.ccb61c87b11b9869145a.jpg",
+    "index.html": "/stormsafeph/index.html",
+    "main.ed997206.css.map": "/stormsafeph/static/css/main.ed997206.css.map",
+    "main.a779557c.js.map": "/stormsafeph/static/js/main.a779557c.js.map",
+    "453.efaaff85.chunk.js.map": "/stormsafeph/static/js/453.efaaff85.chunk.js.map"
+  },
+  "entrypoints": [
+    "static/css/main.ed997206.css",
+    "static/js/main.a779557c.js"
+  ]
+}
