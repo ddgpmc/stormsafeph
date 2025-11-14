@@ -233,7 +233,7 @@ const TileCacheControl = () => {
                 disabled={isCaching}
                 style={{ 
                     position: 'absolute', 
-                    bottom: '10px', 
+                    bottom: '50px', 
                     left: '10px', 
                     zIndex: 1000, 
                     padding: '8px 12px', 
