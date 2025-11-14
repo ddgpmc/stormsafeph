@@ -1,16 +1,13 @@
 import React, { useRef, useEffect, useState } from 'react';
-// Removed 'withLeaflet' from the import list
 import { MapContainer, Marker, Popup, useMapEvents, useMap } from 'react-leaflet'; 
 import L from 'leaflet';
 import 'leaflet-routing-machine'; 
-import 'leaflet.offline'; // Correctly installed offline plugin
 import 'leaflet/dist/leaflet.css'; 
 
 // --- Marker Clustering Imports ---
 import 'leaflet.markercluster';
 import 'leaflet.markercluster/dist/MarkerCluster.css';
 import 'leaflet.markercluster/dist/MarkerCluster.Default.css';
-// ---------------------------------
 
 // --- FIX: Leaflet Marker Icons ---
 import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png';
@@ -26,25 +23,128 @@ L.Icon.Default.mergeOptions({
 
 const TILE_URL = "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png";
 
+// ---------------------------------------------------
+// IndexedDB Helper Functions for Tile Caching
+// ---------------------------------------------------
+const openDB = () => {
+    return new Promise((resolve, reject) => {
+        const request = indexedDB.open('MapTilesDB', 1);
+        
+        request.onerror = () => reject(request.error);
+        request.onsuccess = () => resolve(request.result);
+        
+        request.onupgradeneeded = (event) => {
+            const db = event.target.result;
+            if (!db.objectStoreNames.contains('tiles')) {
+                db.createObjectStore('tiles', { keyPath: 'key' });
+            }
+        };
+    });
+};
+
+const saveTileToCache = async (db, key, blob) => {
+    return new Promise((resolve, reject) => {
+        const transaction = db.transaction(['tiles'], 'readwrite');
+        const store = transaction.objectStore('tiles');
+        const request = store.put({ key, blob, timestamp: Date.now() });
+        
+        request.onsuccess = () => resolve();
+        request.onerror = () => reject(request.error);
+    });
+};
+
+const getTileCoords = (bounds, zoom) => {
+    const tiles = [];
+    const tileSize = 256;
+    
+    const min = L.CRS.EPSG3857.latLngToPoint(bounds.getSouthWest(), zoom).divideBy(tileSize).floor();
+    const max = L.CRS.EPSG3857.latLngToPoint(bounds.getNorthEast(), zoom).divideBy(tileSize).floor();
+    
+    for (let x = min.x; x <= max.x; x++) {
+        for (let y = min.y; y <= max.y; y++) {
+            tiles.push({ x, y, z: zoom });
+        }
+    }
+    
+    return tiles;
+};
+
 // ===================================================
-// FIXED: Offline Tile Layer Component (Imperative approach)
+// Offline Tile Layer Component with Cache Support
 // ===================================================
 const OfflineTileLayer = () => {
-    const map = useMap(); // Get map instance using hook
+    const map = useMap();
     const tileLayerRef = useRef(null);
+    const dbRef = useRef(null);
 
     useEffect(() => {
-        // 1. Create the offline layer instance
-        const offlineLayer = L.tileLayer.offline(TILE_URL, {
+        // Open IndexedDB
+        const initDB = async () => {
+            try {
+                dbRef.current = await openDB();
+            } catch (err) {
+                console.warn("IndexedDB not available:", err);
+            }
+        };
+        initDB();
+
+        // Create custom tile layer with cache fallback
+        const CustomTileLayer = L.TileLayer.extend({
+            createTile: function(coords, done) {
+                const tile = document.createElement('img');
+                const key = `${coords.z}_${coords.x}_${coords.y}`;
+                
+                // Try to load from cache first
+                if (dbRef.current) {
+                    const transaction = dbRef.current.transaction(['tiles'], 'readonly');
+                    const store = transaction.objectStore('tiles');
+                    const request = store.get(key);
+                    
+                    request.onsuccess = () => {
+                        if (request.result && request.result.blob) {
+                            // Load from cache
+                            const url = URL.createObjectURL(request.result.blob);
+                            tile.src = url;
+                            tile.onload = () => {
+                                URL.revokeObjectURL(url);
+                                done(null, tile);
+                            };
+                        } else {
+                            // Not in cache, load from network
+                            this._loadFromNetwork(tile, coords, done);
+                        }
+                    };
+                    
+                    request.onerror = () => {
+                        // Cache failed, load from network
+                        this._loadFromNetwork(tile, coords, done);
+                    };
+                } else {
+                    // No DB, load from network
+                    this._loadFromNetwork(tile, coords, done);
+                }
+                
+                return tile;
+            },
+            
+            _loadFromNetwork: function(tile, coords, done) {
+                const s = ['a', 'b', 'c'][(coords.x + coords.y) % 3];
+                const url = `https://${s}.tile.openstreetmap.org/${coords.z}/${coords.x}/${coords.y}.png`;
+                
+                tile.src = url;
+                tile.onload = () => done(null, tile);
+                tile.onerror = () => done(new Error('Tile load error'), tile);
+            }
+        });
+
+        const tileLayer = new CustomTileLayer(TILE_URL, {
             maxZoom: 19,
             attribution: '© <a href="http://osm.org/copyright">OpenStreetMap</a> contributors'
         });
 
-        // 2. Add it to the map
-        offlineLayer.addTo(map);
-        tileLayerRef.current = offlineLayer;
+        tileLayer.addTo(map);
+        tileLayerRef.current = tileLayer;
 
-        // Cleanup function
         return () => {
             if (tileLayerRef.current) {
                 map.removeLayer(tileLayerRef.current);
@@ -54,56 +154,106 @@ const OfflineTileLayer = () => {
 
     return null;
 };
-// ===================================================
-
 
 // ---------------------------------------------------
-// NEW: Component for Offline Tile Cache Control
+// Tile Cache Control Component
 // ---------------------------------------------------
 const TileCacheControl = () => {
     const map = useMap();
     const [isCaching, setIsCaching] = useState(false);
-    // Use a memoized function for the factory to avoid re-creating the layer on every render
-    const [cacheLayerRef] = useState(() => L.tileLayer.offline(TILE_URL));
+    const [progress, setProgress] = useState({ current: 0, total: 0 });
     
-    // Function to start caching
-    const startCaching = () => {
+    const startCaching = async () => {
         const bounds = map.getBounds();
-        const minZoom = 12; // Focus on a reasonable local area
-        const maxZoom = 15; // Max detail level to download
+        const minZoom = 13; // Reduced range for faster caching
+        const maxZoom = 15;
 
         setIsCaching(true);
         console.log(`Starting cache from zoom ${minZoom} to ${maxZoom}...`);
 
-        // Start the download process using the offline layer factory
-        cacheLayerRef.download(bounds, minZoom, maxZoom)
-            .on('success', () => {
-                setIsCaching(false);
-                alert(`Map tiles successfully cached for the visible area (Zoom ${minZoom}-${maxZoom})!`);
-            })
-            .on('error', (err) => {
-                setIsCaching(false);
-                console.error("Caching Error:", err);
-                alert("Error caching tiles. Check console.");
-            });
+        try {
+            const db = await openDB();
+            const allTiles = [];
+            
+            // Collect all tile coordinates for all zoom levels
+            for (let z = minZoom; z <= maxZoom; z++) {
+                const tiles = getTileCoords(bounds, z);
+                allTiles.push(...tiles);
+            }
+            
+            setProgress({ current: 0, total: allTiles.length });
+            console.log(`Total tiles to download: ${allTiles.length}`);
+            
+            let downloaded = 0;
+            const batchSize = 5; // Download 5 tiles at a time
+            
+            // Process tiles in batches
+            for (let i = 0; i < allTiles.length; i += batchSize) {
+                const batch = allTiles.slice(i, i + batchSize);
+                
+                await Promise.all(batch.map(async (tile) => {
+                    try {
+                        // Generate tile URL
+                        const s = ['a', 'b', 'c'][Math.floor(Math.random() * 3)];
+                        const url = `https://${s}.tile.openstreetmap.org/${tile.z}/${tile.x}/${tile.y}.png`;
+                        const key = `${tile.z}_${tile.x}_${tile.y}`;
+                        
+                        // Fetch tile
+                        const response = await fetch(url);
+                        if (response.ok) {
+                            const blob = await response.blob();
+                            await saveTileToCache(db, key, blob);
+                        }
+                        
+                        downloaded++;
+                        setProgress({ current: downloaded, total: allTiles.length });
+                    } catch (err) {
+                        console.warn(`Failed to cache tile ${tile.z}/${tile.x}/${tile.y}:`, err);
+                    }
+                }));
+                
+                // Small delay between batches to avoid rate limiting
+                await new Promise(resolve => setTimeout(resolve, 100));
+            }
+            
+            setIsCaching(false);
+            alert(`Successfully cached ${downloaded} tiles for offline use! ✓`);
+            
+        } catch (error) {
+            setIsCaching(false);
+            console.error("Caching Error:", error);
+            alert("Error caching tiles. Please check console for details.");
+        }
     };
 
     return (
-        // Placing the button inside a div here with absolute positioning.
         <div id="cache-control">
             <button 
                 onClick={startCaching}
                 disabled={isCaching}
-                // Style for quick visibility and interaction
-                style={{ position: 'absolute', bottom: '10px', left: '10px', zIndex: 1000, padding: '5px 10px', backgroundColor: '#3498db', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}
+                style={{ 
+                    position: 'absolute', 
+                    bottom: '10px', 
+                    left: '10px', 
+                    zIndex: 1000, 
+                    padding: '8px 12px', 
+                    backgroundColor: isCaching ? '#95a5a6' : '#3498db', 
+                    color: 'white', 
+                    border: 'none', 
+                    borderRadius: '5px', 
+                    cursor: isCaching ? 'not-allowed' : 'pointer',
+                    fontSize: '12px',
+                    fontWeight: 'bold',
+                    boxShadow: '0 2px 4px rgba(0,0,0,0.2)'
+                }}
             >
-                {isCaching ? "Downloading Tiles..." : "Download Map Tiles for Offline ⬇️"}
+                {isCaching 
+                    ? `Caching... ${progress.current}/${progress.total}` 
+                    : "📥 Cache Map for Offline"}
             </button>
         </div>
     );
 };
-// ---------------------------------------------------
-
 
 // ---------------------------------------------------
 // Component for Clustered Markers 
@@ -137,10 +287,10 @@ const ClusteredMarkers = ({ evacCenters }) => {
 
     return null;
 };
+
 // ---------------------------------------------------
-
-
-// Custom hook/component to manage the routing machine and nearest center logic 
+// Routing Machine Component
+// ---------------------------------------------------
 const RoutingMachine = ({ userLocation, evacCenters, triggerRoute, setTriggerRoute }) => {
     const map = useMap();
     const routingControlRef = useRef(null);
@@ -159,7 +309,7 @@ const RoutingMachine = ({ userLocation, evacCenters, triggerRoute, setTriggerRou
             return cleanup;
         }
 
-        // --- Find Nearest Center Logic (Unchanged) ---
+        // Find Nearest Center
         let nearest = evacCenters[0];
         let minDist = L.latLng(userLocation.lat, userLocation.lng).distanceTo(L.latLng(nearest.lat, nearest.lng));
 
@@ -168,7 +318,7 @@ const RoutingMachine = ({ userLocation, evacCenters, triggerRoute, setTriggerRou
             if(dist < minDist) { minDist = dist; nearest = c; }
         });
         
-        // Step 3: Initialize new route control 
+        // Initialize route control 
         const newControl = L.Routing.control({
             waypoints: [ 
                 L.latLng(userLocation.lat, userLocation.lng), 
@@ -206,7 +356,10 @@ const RoutingMachine = ({ userLocation, evacCenters, triggerRoute, setTriggerRou
 
     return null;
 };
-// Custom hook/component to detect user location 
+
+// ---------------------------------------------------
+// Location Marker Component
+// ---------------------------------------------------
 const LocationMarker = ({ setUserLocation }) => {
     const map = useMapEvents({
         locationfound(e) {
@@ -227,11 +380,10 @@ const LocationMarker = ({ setUserLocation }) => {
     return null;
 };
 
-
-const EvacMap = ({ userLocation, setUserLocation, evacCenters,
-    triggerRoute, 
-    setTriggerRoute 
-}) => {
+// ---------------------------------------------------
+// Main Evacuation Map Component
+// ---------------------------------------------------
+const EvacMap = ({ userLocation, setUserLocation, evacCenters, triggerRoute, setTriggerRoute }) => {
     const initialPosition = [14.6500, 120.9800]; 
 
     return (
@@ -239,22 +391,19 @@ const EvacMap = ({ userLocation, setUserLocation, evacCenters,
             id="map" 
             center={initialPosition} 
             zoom={12} 
-            scrollWheelZoom={true} 
-            whenCreated={map => { 
-                // Any imperative Leaflet code you need can go here
-            }}
+            scrollWheelZoom={true}
         >
-            {/* 1. Use the Offline Tile Layer Component */}
+            {/* 1. Offline-capable Tile Layer */}
             <OfflineTileLayer />
             
-            {/* 2. Marker for the User Location */}
+            {/* 2. User Location Marker */}
             {userLocation && (
                 <Marker position={[userLocation.lat, userLocation.lng]}>
                     <Popup>You are here</Popup>
                 </Marker>
             )}
 
-            {/* 3. Clustered Markers */}
+            {/* 3. Clustered Evacuation Center Markers */}
             <ClusteredMarkers evacCenters={evacCenters} />
             
             {/* 4. Location Detection */}
@@ -268,7 +417,7 @@ const EvacMap = ({ userLocation, setUserLocation, evacCenters,
                 setTriggerRoute={setTriggerRoute} 
             />
 
-            {/* 6. The Cache Control Button */}
+            {/* 6. Offline Cache Control Button */}
             <TileCacheControl />
 
         </MapContainer>
